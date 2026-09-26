@@ -1,1 +1,62 @@
-{"asset": {"examples": ["15L car", "25L house"], "mechanism": "downpayment+mortgage | auto loan/cash/EMI"}, "debt": {"examples": ["loan"], "mechanism": "refinance/repay"}, "liquidity": {"examples": ["save 2L", "3L medical reserve"], "mechanism": "liquid reserve"}, "protection": {"examples": ["parents protected", "health"], "mechanism": "insurance+reserve"}, "travel": {"examples": ["Japan next year", "Dubai"], "mechanism": "savings goal"}, "wealth": {"examples": ["invest"], "mechanism": "investment allocation"}}
+{
+ "version": "v1",
+ "purpose": "Objective -> candidate banking mechanisms. Consumed by J5; the single source of truth for the mechanism table.",
+ "objectives": {
+  "travel": {
+   "label": "travel",
+   "mechanisms": [
+    "savings goal"
+   ],
+   "why": "A dated, sized goal is funded by a dedicated savings pot, not by borrowing."
+  },
+  "asset": {
+   "label": "asset",
+   "mechanisms": [
+    "auto loan",
+    "cash purchase",
+    "EMI",
+    "downpayment+mortgage"
+   ],
+   "why": "A vehicle or property purchase legitimately admits both a cash and a financed construct."
+  },
+  "protection": {
+   "label": "protection",
+   "mechanisms": [
+    "insurance+reserve",
+    "liquid reserve"
+   ],
+   "why": "Acute risk needs cover first; a reserve supplements it and can never replace it."
+  },
+  "liquidity": {
+   "label": "liquidity",
+   "mechanisms": [
+    "liquid reserve"
+   ],
+   "why": "A cash buffer needs liquidity, not a long-dated contract."
+  },
+  "wealth": {
+   "label": "wealth",
+   "mechanisms": [
+    "investment allocation"
+   ],
+   "why": "Wealth creation is an allocation problem."
+  },
+  "debt": {
+   "label": "debt",
+   "mechanisms": [
+    "refinance/repay"
+   ],
+   "why": "Paying down expensive debt dominates comparable risk-adjusted returns."
+  }
+ },
+ "liquidity_need_by_objective": [
+  "protection",
+  "liquidity"
+ ],
+ "stated_to_mechanism": {
+  "savings": "liquid reserve",
+  "insurance": "insurance+reserve",
+  "loan": "EMI",
+  "investment": "investment allocation"
+ }
+}

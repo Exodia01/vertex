@@ -10,7 +10,7 @@
   },
   "thresholds": {
     "max_savings_rate": {
-      "value": 0.40,
+      "value": 0.4,
       "unit": "fraction_of_monthly_income",
       "rationale": "Caps how much of net monthly income may be committed to a single new goal, leaving headroom for irregular months. 40% is deliberately conservative; a higher ratio makes goals look feasible that fail in a bad month.",
       "provisional": true
@@ -50,6 +50,12 @@
       "unit": "months_of_income_owed",
       "rationale": "Outstanding debt above this multiple of monthly income marks a debt-spiral profile. Chosen over an interest-rate proxy because a long-tenor loan carries a low monthly payment while still being structurally unaffordable - the monthly-service test alone approved the debt-spiral persona in testing.",
       "provisional": true
+    },
+    "emergency_basis_amount": {
+      "value": 270000,
+      "unit": "rupees",
+      "rationale": "Household monthly essential outflow used as the numerator for runway. Derived from the persona's recurring essential commitments, not a market constant, so it belongs to feasibility policy rather than to the external-benchmark file.",
+      "provisional": true
     }
   },
   "mechanism_rules": {
@@ -57,7 +63,7 @@
       "value": true,
       "rationale": "A pure savings reserve cannot absorb a large acute medical shock. If the customer's stated mechanism for a protection objective is savings-only, the construct is judged wrong-construct and challenged, even when a feasible alternative exists.",
       "provisional": false,
-      "source": "Anchor 1 §4 Challenge definition; J7 healthcare-reserve demo scenario"
+      "source": "Anchor 1 \u00a74 Challenge definition; J7 healthcare-reserve demo scenario"
     }
   }
 }

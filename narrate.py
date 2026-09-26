@@ -62,22 +62,38 @@ def evidence(snapshot, behaviour, results, soul=None):
         lines.append(f"Apne liye kharch: sirf {_inr(joy)}. Matlab apni baari me zyada nahi kharche.")
     r=results[0]
     lines.append(f"Emergency cushion: {r['emergency_mo']} mahine.")
+    if r.get("stress_applied"):
+        lines.append(f"Sabse kam aana: {_inr(r['income_worst_used'])} (average {_inr(r['income_avg_used'])}).")
     return lines
 
-def verdict(result, snapshot):
-    o=result["outcome"]; need=_inr(result["monthly_need"]); avail=_inr(result["avail_monthly"])
+def verdict(result, snapshot, challenge=None):
+    """Headline register + arithmetic. When J7 has authored a challenge, that text is the
+    customer-facing body - narration must not paraphrase it, or the journal and the screen
+    would disagree about what was actually said."""
+    o=result["outcome"]
+    need=_inr(result["monthly_need"])
+    stress=result.get("stress_applied")
+    limit=result.get("avail_stress_monthly",result["avail_monthly"])
     if o=="feasible":
-        return ("GO AHEAD", f"{need} per mahina chahiye, tumhare {avail} khaane me se niklta hai. "
-                f"Emergency {result['emergency_mo']} mahine bacha hai. Ye plan chalega.")
+        if stress:
+            body=(f"{need} per mahina chahiye. Tera aana seasonal hai — isliye maine hisaab teri "
+                  f"sabse kam wali mahine ({_inr(result['income_worst_used'])}) se lagaya, jabki average "
+                  f"{_inr(result['income_avg_used'])} hai. Usi hisaab se {_inr(limit)} bachta hai. "
+                  f"Emergency {result['emergency_mo']} mahine. Ye plan chalega.")
+        else:
+            body=(f"{need} per mahina chahiye, aur tere {limit} khaane me se niklta hai. "
+                  f"Emergency {result['emergency_mo']} mahine bacha hai. Ye plan chalega.")
+        return "GO AHEAD", body
     if o=="gap":
-        short=_inr(result["gap_amount"])
-        return ("YE HO NHI SAKTA AS IS", f"{need} chahiye mahina, lekin comfortable limit {avail} hai. "
-                f"Matlab har mahine {short} ka shortfall hai. Tenz mat le — adjust karna padega.")
-    return ("EK GALTI MILI", "Sirf paise bachana is maqsad ke liye sahi nahi hai. "
-            "Bima ke bina ek bada medical aa gaya to sab khatam. Ek aur rasta hai.")
+        return "YE HO NHI SAKTA AS IS", (challenge or
+                (f"{need} chahiye mahina, lekin comfortable limit {_inr(limit)} hai. "
+                 f"Matlab har mahine {_inr(result['gap_amount'])} ka shortfall."))
+    return "EK GALTI MILI", (challenge or
+            "Sirf paise bachana is maqsad ke liye sahi nahi hai. Ek aur rasta hai.")
 
 def alternatives(alts):
-    return [ALT_LABEL.get(a["type"],a["type"]) for a in alts]
+    """J7 already authors these in the customer's language; do not re-translate."""
+    return [a["description"] for a in alts]
 
 def decision_options():
     return [

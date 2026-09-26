@@ -8,7 +8,27 @@ import narrate as N
 
 SOUL=json.load(open("soul.json"))
 
-PIPE=Pipeline(memory_path="memory.jsonl")
+# Financial memory is sealed at rest when IASPIRE_MEMORY_SECRET is set. Absent a secret the
+# store still works but is plaintext, and /api/health reports which mode is live - so the weak
+# mode is visible rather than silent. See j9_memory.CRYPTO_NOTE for what this does and does
+# not guarantee.
+import os as _os
+_SECRET=_os.environ.get("IASPIRE_MEMORY_SECRET") or None
+
+def _llm_health():
+    """Report the language layer honestly: whether it is on, whether it is actually reachable,
+    and how arbitration is configured. Never raises - health must work when everything else
+    does not."""
+    try:
+        import j4_llm as L
+        s=L.llm_stats()
+        return {"enabled":s["enabled"],"provider":s["provider"],"model":s["model"],
+                "arbitration":s["arbitration"],"reachable":s["ollama_reachable"],
+                "active":"model" if (s["enabled"] and s["ollama_reachable"]) else "deterministic_fallback",
+                "intent_stats":s["intent"]}
+    except Exception as e:
+        return {"enabled":False,"active":"deterministic_fallback","error":type(e).__name__}
+PIPE=Pipeline(memory_path="memory.jsonl",master_secret=_SECRET)
 SESSION={"streak":0}
 
 def _submit_flow(text):
@@ -21,7 +41,7 @@ def _submit_flow(text):
     stages.append({"kind":"objective","text":N.objective(r["intent"]),
                    "confidence":r["intent"]["confidence"],"tags":["ai_hypothesis"]})
     stages.append({"kind":"evidence","lines":N.evidence(PIPE.snapshot,PIPE.behaviour,r["results"],SOUL)})
-    head,body=N.verdict(res,PIPE.snapshot)
+    head,body=N.verdict(res,PIPE.snapshot,challenge=r.get("challenge"))
     stages.append({"kind":"verdict","headline":head,"text":body,"outcome":res["outcome"]})
     stages.append({"kind":"options","options":N.decision_options(),
                    "alternatives":N.alternatives(r.get("alternatives",[]))})
@@ -40,7 +60,7 @@ def _respond_flow(aid,response,modified):
     elif r["status"]=="abandoned":
         stages.append({"kind":"note","text":"Theek hai, band kar diya. Jab mann kare wapas aa jaana."})
     elif r["status"]=="re-analysed":
-        head,body=N.verdict(r["results"][0],PIPE.snapshot)
+        head,body=N.verdict(r["results"][0],PIPE.snapshot,challenge=r.get("challenge"))
         stages.append({"kind":"evidence","lines":N.evidence(PIPE.snapshot,PIPE.behaviour,r["results"],SOUL)})
         stages.append({"kind":"verdict","headline":head,"text":body,"outcome":r["results"][0]["outcome"]})
         stages.append({"kind":"options","options":N.decision_options(),
@@ -196,6 +216,18 @@ loadMem();
 
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
+    def handle_one_request(self):
+        """A handler that raises must still produce a well-formed response. Without this a
+        route error closes the connection with no status line at all, which is indistinguishable
+        from the app being down."""
+        try: super().handle_one_request()
+        except Exception as e:
+            try:
+                self._send(500,json.dumps({"error":"internal_error","type":type(e).__name__}))
+            except Exception: pass
+            try: PIPE.audit_log.emit("deterministic_engine","http.handler_error",type(e).__name__,
+                                     PIPE._trace("http"))
+            except Exception: pass
     def _send(self,code,body,ctype="application/json"):
         raw=body.encode() if isinstance(body,str) else body
         self.send_response(code); self.send_header("Content-Type",ctype)
@@ -205,10 +237,28 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
     def do_GET(self):
         if self.path=="/": return self._send(200,PAGE,"text/html")
+        if self.path=="/api/boom":
+            if _os.environ.get("IASPIRE_TEST_ROUTES")!="1":
+                return self._send(404,'{"error":"not found"}')
+            raise RuntimeError("deliberate handler fault for the guard test")
         if self.path=="/api/journal/memory": return self._send(200,json.dumps({"records":PIPE.memory_view()},default=str))
         if self.path=="/api/journal/memory/narrated":
             return self._send(200,json.dumps({"lines":[N.memory_line(x) for x in PIPE.memory_view()]}))
-        if self.path=="/api/audit": return self._send(200,json.dumps({"funnel":PIPE.funnel(),"audit":PIPE.audit[-25:]},default=str))
+        if self.path=="/api/audit":
+            return self._send(200,json.dumps({"funnel":PIPE.funnel(),
+                "actions":PIPE.audit_log.counts_by_action(),
+                "read_events":len(PIPE.audit_log.read_events()),
+                "recent":PIPE.audit_log.records[-25:]},default=str))
+        if self.path=="/api/health":
+            from j9_memory import CRYPTO_NOTE
+            return self._send(200,json.dumps({
+                "memory_at_rest":"sealed" if _SECRET else "PLAINTEXT_NO_SECRET_SET",
+                "crypto_scheme":CRYPTO_NOTE["scheme"],
+                "crypto_status":CRYPTO_NOTE["status"],
+                "llm_layer":_llm_health(),
+                "audit_events":len(PIPE.audit_log.records),
+                "read_events":len(PIPE.audit_log.read_events()),
+                "quarantined":PIPE.quarantine.count()},indent=1))
         self._send(404,'{"error":"not found"}')
     def do_POST(self):
         b=self._body()
@@ -219,10 +269,13 @@ class H(BaseHTTPRequestHandler):
             return self._send(200,json.dumps(_submit_flow(b["text"]),default=str))
         if self.path=="/api/flow/change":
             out=PIPE.simulate_material_change(b.get("kind","income_drop"))
-            trig=(out[0].get("challenge") and "large_withdrawal") if out else "income_drop"
-            ev=[e for e in PIPE.audit if e["event"]=="reanalysis.triggered"]
-            t=(ev[-1]["trigger"] if ev else {"type":"income_drop"})
-            return self._send(200,json.dumps({"stages":[{"kind":"alert","text":N.change_alert(b.get("kind"),t,out)}],"reanalysis":out},default=str))
+            # trigger detail comes from the single audit store, not a parallel log
+            fired=[r for r in PIPE.audit_log.records
+                   if r["action"] in ("reanalysis.triggered","priority.raised")]
+            t=(fired[-1]["detail"].get("trigger",{"type":b.get("kind","income_drop")})
+               if fired else {"type":b.get("kind","income_drop")})
+            stages=([{"kind":"alert","text":N.change_alert(b.get("kind"),t,out)}] if out else [])
+            return self._send(200,json.dumps({"stages":stages,"reanalysis":out},default=str))
         if self.path=="/api/aspirations":
             if not b.get("text"): return self._send(400,'{"error":"text required"}')
             return self._send(200,json.dumps(PIPE.submit(b["text"]),default=str))

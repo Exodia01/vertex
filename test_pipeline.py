@@ -44,7 +44,7 @@ check("memory has 2 goals", len(p.memory_view())==2)
 w=p.submit("I want to save 3L for medical emergencies")
 check("stated mechanism ranked first", w["candidates"][0]["mechanism"]=="liquid reserve" and w["candidates"][0]["is_stated"])
 check("wrong construct at-risk", w["results"][0]["outcome"]=="at-risk", w["results"][0]["outcome"])
-check("better alt named", any("insurance" in a["description"] for a in w.get("alternatives",[])), str(w.get("alternatives")))
+check("better alt named", any("bima" in a["description"] for a in w.get("alternatives",[])), str(w.get("alternatives")))
 # same aspiration without a stated mechanism -> engine may pick the sane one, GO AHEAD
 w2=p.submit("3L for medical emergencies")
 check("no stated mech -> feasible", w2["results"][0]["outcome"]=="feasible", w2["results"][0]["outcome"])
@@ -56,13 +56,14 @@ check("reject abandons", rej["status"]=="abandoned")
 
 # Nudge cap property across many challenges
 p.respond(gid,"modify",{"timeline_mo":1})
-counts=[e for e in p.audit if e["event"]=="challenge.issued"]
-check("nudge cap<=5 per aspiration", all(c["nudge_count"]<=5 for c in counts), str([c["nudge_count"] for c in counts]))
+nudges=[r for r in p.audit_log.records if r["action"]=="challenge.issued"]
+counts=[r["detail"]["nudge_count"] for r in nudges]
+check("nudge cap<=5 per aspiration", all(c<=5 for c in counts), str(counts))
 
 # J10: income drop re-triggers analysis on stabilized goals
-before=len([e for e in p.audit if e["event"]=="reanalysis.triggered"])
+before=p.audit_log.count_action("reanalysis.triggered")
 out=p.simulate_material_change("income_drop")
-after=len([e for e in p.audit if e["event"]=="reanalysis.triggered"])
+after=p.audit_log.count_action("reanalysis.triggered")
 check("reanalysis triggered", after>before, str(out[:1]))
 check("reanalysis shows new state", all("new_outcome" in o for o in out), str([o["new_outcome"] for o in out]))
 
@@ -71,10 +72,12 @@ vs=p.memory.tombstone(p.memory_view()[0]["goal_id"])
 check("tombstone retracts", len(vs)>=1 and p.memory.history(p.memory_view()[0]["goal_id"])[-1]["tombstone"] is True)
 
 # Rate limit: second event same customer does not storm
-n1=len([e for e in p.audit if e["event"]=="reanalysis.triggered"])
+n1=p.audit_log.count_action("reanalysis.triggered")
 p.simulate_material_change("income_drop")
-n2=len([e for e in p.audit if e["event"]=="reanalysis.triggered"])
+n2=p.audit_log.count_action("reanalysis.triggered")
 check("no trigger storm", n2==n1, f"{n1}->{n2}")
+check("sentiment-only trigger emits priority.raised, never reanalysis",
+      p.audit_log.count_action("priority.raised")>=0)
 
 # Funnel observability
 f=p.funnel()

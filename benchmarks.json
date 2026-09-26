@@ -1,1 +1,18 @@
-{"dubai_family": 120000, "emergency_6mo_base": 270000, "inflation": 0.06, "japan_trip": 250000, "mf_expected": 0.12, "term_1Cr_per_yr": 12000}
+{
+ "version": "v1",
+ "purpose": "External market reference figures only. Anything that is a household-specific or policy-specific constant belongs in policy/feasibility_policy.json, which is the single owner. Duplicating a constant across these two files previously let them disagree silently.",
+ "external_benchmarks": {
+  "travel": {
+   "dubai_family_typical": 120000,
+   "japan_trip_typical": 250000
+  },
+  "rates": {
+   "mf_expected_annual": 0.12,
+   "fd_typical": 0.071,
+   "term_1cr_premium_annual": 12000
+  },
+  "macro": {
+   "inflation_annual": 0.06
+  }
+ }
+}

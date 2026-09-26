@@ -20,7 +20,8 @@ def policy_snapshot():
             "thresholds_applied":dict(T),
             "provisional":_POLICY["provenance"]["status"]=="PROVISIONAL"}
 
-DEFAULT_EMERGENCY_BASIS=270000
+# Emergency basis lives ONLY in policy/feasibility_policy.json. Single owner, no duplicate.
+DEFAULT_EMERGENCY_BASIS=T["emergency_basis_amount"]
 
 def emergency_months(savings, emergency_basis=None):
     """Liquid runway in months, using the declared basis denominator."""
@@ -30,9 +31,8 @@ def emergency_months(savings, emergency_basis=None):
     return round(savings/(basis/monthly_basis),2)
 
 def _basis_from(benchmarks):
-    if isinstance(benchmarks,dict): return benchmarks.get("emergency_6mo_base",DEFAULT_EMERGENCY_BASIS)
-    if isinstance(benchmarks,(str,os.PathLike)):
-        return json.load(open(benchmarks)).get("emergency_6mo_base",DEFAULT_EMERGENCY_BASIS)
+    """External benchmark files no longer own this constant. Passing one is accepted for
+    signature compatibility but deliberately ignored, so there is exactly one source."""
     return DEFAULT_EMERGENCY_BASIS
 
 def compute(candidate, snapshot, benchmarks=None):

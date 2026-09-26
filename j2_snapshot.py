@@ -26,6 +26,10 @@ class FinancialSnapshot:
     data_class: str = "observed_data"
 
 INCOME_CATS={"income"}
+# FX rates are policy, not code. Held here so a snapshot can normalise multi-currency accounts
+# without touching the engine. Rates are illustrative and marked as such.
+FX_TO_BASE={"INR":1.0,"USD":83.0,"EUR":90.0,"GBP":106.0,"AED":22.6}
+BASE_CURRENCY="INR"
 ESSENTIAL={"family_health","investment","hostel_ops","essentials"}
 RECURRING_CATS={"family_health","subscription","investment","utilities"}
 TOL=0.01
@@ -56,14 +60,27 @@ def _derive_obligations(txns, window_keys):
     detail={k:round(v/max(1,len(months[k])),2) for k,v in totals.items()}
     return round(sum(detail.values()),2), detail
 
+def _to_base(amount,currency):
+    """Normalise a foreign-currency amount into the base currency. Unknown currency is a
+    hard error rather than a silent 1:1, which would understate a foreign balance."""
+    if not currency or currency==BASE_CURRENCY: return amount
+    rate=FX_TO_BASE.get(currency)
+    if rate is None: raise ValueError(f"no FX rate for {currency}")
+    return round(amount*rate,2)
+
 def build_snapshot(customer_id, txns: List[RawTransaction], accts: Dict[str,RawAccountSnapshot],
-                   as_of: str, income_pattern: str="flat"):
-    balances={k:v.balance for k,v in accts.items()}
+                   as_of: str, income_pattern: str="flat", base_currency: str=BASE_CURRENCY):
+    balances={}
+    fx={}
+    for k,v in accts.items():
+        cur=(v.meta or {}).get("currency",base_currency)
+        balances[k]=_to_base(v.balance,cur)
+        if cur!=base_currency: fx[k]=cur
     window=_months_between(as_of, WINDOW_MONTHS)
     income={k:0.0 for k in window}
     for t in txns:
         if t.category in INCOME_CATS and t.amount>0 and _month_key(t.date) in window:
-            income[_month_key(t.date)]+=t.amount
+            income[_month_key(t.date)]+=_to_base(t.amount,(t.meta or {}).get("currency"))
 
     observed=[k for k in window if income[k]>0]
     if observed:
@@ -87,11 +104,13 @@ def build_snapshot(customer_id, txns: List[RawTransaction], accts: Dict[str,RawA
         income_avg=round(sum(income[k] for k in window)/len(window),2)
 
     debits=[t for t in txns if t.category not in INCOME_CATS]
-    spend=round(sum(t.amount for t in debits),2)
-    essential=round(sum(t.amount for t in debits if t.category in ESSENTIAL),2)
+    spend=round(sum(_to_base(t.amount,(t.meta or {}).get("currency")) for t in debits),2)
+    essential=round(sum(_to_base(t.amount,(t.meta or {}).get("currency")) for t in debits
+                        if t.category in ESSENTIAL),2)
     obligations,oblig_detail=_derive_obligations(txns,window)
 
-    profile={"pattern":income_pattern,"window_months":WINDOW_MONTHS,
+    profile={"base_currency":base_currency,"fx_normalised":fx or None,"fx_rates":FX_TO_BASE,
+             "pattern":income_pattern,"window_months":WINDOW_MONTHS,
              "months_observed":len(observed),"months_missing":WINDOW_MONTHS-len(observed),
              "worst_ratio":round(income_min/income_avg,3) if income_avg>0 else 0.0,
              "obligations_derived_from":"observed_transactions",

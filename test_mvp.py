@@ -18,7 +18,13 @@ def check(name,cond,info=""):
 
 # J1: bad record quarantined, zero silent drop, consent tag
 tx,ac,q,a=ingest(mock["transactions"]+[{"id":"bad"}], mock["accounts"], ["txn.read","bal.read"])
-check("J1 quarantine", any("bad" in str(r) for r in q) and len(tx)==len(mock["transactions"]))
+check("J1 quarantine", q.count()==1 and len(tx)==len(mock["transactions"]))
+check("J1 reason code", "missing" in q.reason_codes(), str(q.reason_codes()))
+try:
+    q.read("intruder"); check("J1 quarantine access-controlled",False)
+except PermissionError: check("J1 quarantine access-controlled",True)
+q.grant("data_quality_officer")
+check("J1 granted principal can read",len(q.read("data_quality_officer"))==1)
 check("J1 consent tag", all("txn.read" in t.consent_scope for t in tx))
 
 # J2: snapshot reconciles

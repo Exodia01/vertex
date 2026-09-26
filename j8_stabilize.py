@@ -3,7 +3,7 @@ Emits a contract-valid STABILIZED_JOURNAL_STATE. state_version is threaded in fr
 financial memory (J9) so the emitted version can never disagree with the stored one.
 Sentiment is coarse-band only and never blocks stabilization (Anchor 1 §9 step 11, §21 v1.1)."""
 import re
-from contracts import assert_boundary_clean, validate_event, PINNED, SUPPORTED
+from contracts import (assert_boundary_clean, validate_event, project_event, PINNED, SUPPORTED)
 
 MECH_CATEGORY={
  "savings goal":"savings_goal","insurance+reserve":"insurance_reserve",
@@ -48,6 +48,10 @@ def stabilize(aspiration_id, customer_ref, intent, candidate, feas, response,
     ev={"customer_ref":customer_ref,
         "objective_category":intent["objective_category"],
         "mechanism_category":MECH_CATEGORY[candidate["mechanism"]],
+        # internal-only fields below; stripped by project_event before emission
+        "internal_evidence_ref":f"asp:{aspiration_id}",
+        "internal_monthly_need":feas.get("monthly_need"),
+        "internal_risk_notes":feas.get("risk_notes"),
         "feasibility_outcome":feas["outcome"],
         "coarse_target_band":band_target(candidate["required_capital"]),
         "coarse_timeline_band":band_timeline(candidate["horizon_mo"]),
@@ -56,6 +60,9 @@ def stabilize(aspiration_id, customer_ref, intent, candidate, feas, response,
     if cv=="v1.1":
         if sentiment_band: ev["coarse_sentiment_band"]=sentiment_band
         if confidence_band: ev["confidence_band"]=confidence_band
+    # Project to the permitted fields FIRST, then validate. Internal-only fields are dropped
+    # by construction and can never reach the contract check or the wire.
+    ev=project_event(ev,cv)
     errs=validate_event(ev,f"SJS_{cv}")
     if errs: raise ValueError(f"emitted event fails contract: {errs[:2]}")
     assert_boundary_clean(ev)

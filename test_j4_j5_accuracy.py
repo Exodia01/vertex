@@ -60,7 +60,9 @@ for c in ASP["stated_mechanism_cases"]:
     cands=candidates(r)
     check(f"{c['id']} primary mechanism",cands[0]["mechanism"]==c["expect_primary_mechanism"],
           cands[0]["mechanism"])
-    check(f"{c['id']} primary flagged as stated",cands[0]["is_stated"] is True)
+    check(f"{c['id']} primary flagged as stated",
+          cands[0]["is_stated"] == (c["expect_stated"] is not None),
+          f"is_stated={cands[0]['is_stated']} expect_stated={c['expect_stated']}")
 
 print("=== J5 rubric validation (J5 DoD: 'validated by rubric, not just present') ===")
 RUBRIC=json.load(open("policy/mechanism_rubric.json"))

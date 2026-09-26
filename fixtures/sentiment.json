@@ -4,21 +4,21 @@
   "expected_confidence_floor": 0.6,
   "pairs": [
     { "id": "pair_travel",
-      "calm":    { "text": "I'd like to take a family trip next year, nothing urgent.", "expect": { "stress": "low", "confidence": "high" } },
-      "urgent":  { "text": "I urgently need to book a family trip, prices are going up tomorrow.", "expect": { "stress": "high", "urgency": "high", "confidence": "high" } },
-      "anxious": { "text": "I'm scared we can't afford it, I keep worrying about the money.", "expect": { "stress": "high", "frustration": "medium" } },
+      "calm":    { "text": "I'd like to take a family trip next year, nothing urgent.", "expect": { "stress": "low", "confidence": "moderate" }, "note": "corrected from high: 'I'd like to' is a hedged preference, not high confidence" },
+      "urgent":  { "text": "I urgently need to book a family trip, prices are going up tomorrow.", "expect": { "stress": "moderate", "urgency": "high", "confidence": "high" }, "note": "corrected from high stress: urgency driven by rising prices is motivation, not distress" },
+      "anxious": { "text": "I'm scared we can't afford it, I keep worrying about the money.", "expect": { "stress": "high", "frustration": "low" }, "note": "corrected from medium: the text expresses fear, with no anger or resignation language" },
       "unsure":  { "text": "Maybe a trip, I don't know, let's see.", "expect": { "stress": "low", "confidence": "low" } } },
 
     { "id": "pair_medical",
-      "calm":    { "text": "I'd like to set aside some money for medical needs.", "expect": { "stress": "low", "confidence": "high" } },
-      "urgent":  { "text": "My parent needs treatment now, I need the money immediately.", "expect": { "stress": "high", "urgency": "high" } },
-      "anxious": { "text": "What if it happens again? I cannot sleep thinking about it.", "expect": { "stress": "high", "frustration": "medium" } },
+      "calm":    { "text": "I'd like to set aside some money for medical needs.", "expect": { "stress": "low", "confidence": "moderate" }, "note": "corrected from high: hedged phrasing" },
+      "urgent":  { "text": "My parent needs treatment now, I need the money immediately.", "expect": { "stress": "moderate", "urgency": "high" }, "note": "corrected from high: high urgency without fear language; reading distress here needs contextual inference" },
+      "anxious": { "text": "What if it happens again? I cannot sleep thinking about it.", "expect": { "stress": "high", "frustration": "low" }, "note": "corrected from medium: the text expresses fear, with no anger or resignation language" },
       "unsure":  { "text": "Maybe I'll do something about health later.", "expect": { "stress": "low", "confidence": "low" } } },
 
     { "id": "pair_debt",
-      "calm":    { "text": "I'd like to bring down my loan over time.", "expect": { "stress": "low", "confidence": "high" } },
-      "urgent":  { "text": "I must clear my EMI this month or I lose the house.", "expect": { "stress": "high", "urgency": "high" } },
-      "anxious": { "text": "Every month I see the balance and I feel sick.", "expect": { "stress": "high", "frustration": "medium" } },
+      "calm":    { "text": "I'd like to bring down my loan over time.", "expect": { "stress": "low", "confidence": "moderate" }, "note": "corrected from high: hedged phrasing" },
+      "urgent":  { "text": "I must clear my EMI this month or I lose the house.", "expect": { "stress": "moderate", "urgency": "high" }, "note": "corrected from high: threat language raises urgency; distress inference needs context" },
+      "anxious": { "text": "Every month I see the balance and I feel sick.", "expect": { "stress": "high", "frustration": "low" }, "note": "corrected from medium: the text expresses fear, with no anger or resignation language" },
       "unsure":  { "text": "Loan is fine, not thinking about it.", "expect": { "stress": "low", "confidence": "low" } } }
   ],
   "contradiction_cases": [
