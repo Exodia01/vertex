@@ -44,7 +44,7 @@ check("memory has 2 goals", len(p.memory_view())==2)
 w=p.submit("I want to save 3L for medical emergencies")
 check("stated mechanism ranked first", w["candidates"][0]["mechanism"]=="liquid reserve" and w["candidates"][0]["is_stated"])
 check("wrong construct at-risk", w["results"][0]["outcome"]=="at-risk", w["results"][0]["outcome"])
-check("better alt named", any("bima" in a["description"] for a in w.get("alternatives",[])), str(w.get("alternatives")))
+check("better alt named", any("insurance" in a["description"] for a in w.get("alternatives",[])), str(w.get("alternatives")))
 # same aspiration without a stated mechanism -> engine may pick the sane one, GO AHEAD
 w2=p.submit("3L for medical emergencies")
 check("no stated mech -> feasible", w2["results"][0]["outcome"]=="feasible", w2["results"][0]["outcome"])

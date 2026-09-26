@@ -25,6 +25,34 @@ def _extract_amount(text):
         if token.startswith("₹") or token.startswith("rs"): return int(val)
     return None
 
+# Small talk is conversation, not a failed financial query. A friend answers the greeting
+# first and only then asks what is on their mind.
+SMALL_TALK=["hi","hello","hey","hii","yo","good morning","good evening","good afternoon",
+            "namaste","kaise ho","kya haal","how are you","how r u","how are you doing",
+            "sup","what's up","whats up","sab badhiya","thik hai","acha hai","thanks",
+            "thank you","ok","okay","bye","bye"]
+GREETING_ONLY=re.compile(r"^[\s\W]*(hi|hello|hey|hii|yo|namaste|good\s+(morning|evening|afternoon)"
+                         r"|kaise\s+ho|kya\s+haal|how\s+are\s+you|how\s+r\s*u|sup|"
+                         r"what'?s\s+up|sab\s+badhiya|thik\s+hai|acha\s+hai|thanks|thank\s+you|"
+                         r"ok|okay|bye)[\s\W]*$", re.I)
+# Multi-word greetings ("hi kaise ho") are token-wise small talk, not a financial query.
+_SMALL_WORDS=set("""hi hello hey hii yo hey there namaste namsate good morning good evening
+good afternoon kaise ho kaise haal kya haal kya hal chal raha hai how are you how r u hows
+it going sup whatsup whats up sab badhiya sab theek thik hai acha hai achha hai okay ok
+thanks thank you thank u shukriya bye ta milte ho rehna""".split())
+
+def is_small_talk(text):
+    t=(text or "").strip().lower()
+    if not t: return True
+    if GREETING_ONLY.match(t): return True
+    tokens=re.findall(r"[a-z']+",t)
+    if not tokens: return True
+    unknown=[w for w in tokens if w not in _SMALL_WORDS]
+    # every word must be small talk, apart from a single filler ("a", "the", "and", "u")
+    fillers={"a","an","the","and","u","is","are","you","i","to","me","my","hain","ho"}
+    unknown=[w for w in unknown if w not in fillers]
+    return not unknown
+
 STATED=[
  ("savings",["save","saving","bacha","bachao","jama","jamao","rakho","side me","reserve"]),
  ("insurance",["insurance","bima","cover","policy"]),
@@ -89,8 +117,8 @@ def _stated_mechanism(t):
 
 CONTRADICTION_MARKERS=[r"but also",r"but i also",r"and also",r"at the same time",
                        r"as well as",r"or maybe",r"confused",r"not sure which",r"either",r"or"]
-CLARIFY_CONTRADICT=("Suna main ne do cheezein ek saath — tumhe pehle kaun si sortani hai? "
-                    "Ek line me batao, phir main dusri par bhi usi hisaab se sochta hun.")
+CLARIFY_CONTRADICT=("I can see two different priorities in that. Which one comes first? "
+                    "One line is enough, then I will work out the other on the same basis.")
 _MARKER_RE=re.compile(r"\b(?:"+"|".join(CONTRADICTION_MARKERS)+r")\b")
 
 def _detect_contradiction(t,hits,stated_for_objective):
@@ -117,7 +145,7 @@ def extract_intent(text: str):
     if not hits:
         return {"objective_category":"unknown","confidence":0.0,"amount":amt,"horizon_mo":horizon,
                 "stated_mechanism":stated,
-                "data_class":"ai_hypothesis","clarify":"Aap kya chahte ho — travel, car/house, medical safety, saving ya loan? Ek line me batao."}
+                "data_class":"ai_hypothesis","clarify":"What are you after — a trip, a car or house, medical cover, saving, or a loan? One line is enough."}
     resolved,bonus,contra=_resolve_objective(t,hits)
     best=max(hits,key=hits.get); conf=min(0.95,0.5+0.2*hits[best]+bonus)
     if resolved in hits: best=resolved
@@ -129,5 +157,5 @@ def extract_intent(text: str):
         out["clarify"]=CLARIFY_CONTRADICT
         out["data_class"]="ai_hypothesis"
         return out
-    if conf<0.6: out["clarify"]="Thoda aur batao — kitna paisa, kab tak? (e.g. Dubai 1.2L Dec)"
+    if conf<0.6: out["clarify"]="Tell me a bit more — how much, and by when? (e.g. a Rs 1.2L family trip in December)"
     return out

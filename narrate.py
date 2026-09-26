@@ -1,4 +1,4 @@
-"""Friend-voice narration. Every number is read from engine output, never invented.
+"""Friend-voice narration in English. Every number is read from engine output, never invented.
 No LLM here on purpose: instant, offline, and structurally incapable of hallucinating a figure."""
 import json
 
@@ -9,122 +9,125 @@ def _inr(n):
     return f"Rs {int(n):,}"
 
 OBJ_LABEL={
- "travel":"baahar ka safar","asset":"koi bada kharidna","protection":"family ko suraksha",
- "liquidity":"paisa rakhna","wealth":"paisa badhana","debt":"loan niptana","unknown":"samajh nahi aaya",
+ "travel":"a trip","asset":"a big purchase","protection":"protecting your family",
+ "liquidity":"keeping money aside","wealth":"growing your money","debt":"clearing a loan",
+ "unknown":"unclear",
 }
 MECH_LABEL={
- "savings goal":"Savings goal chal raha hai","auto loan":"Auto loan","cash purchase":"Cash se kharidna",
- "EMI":"EMI / loan","downpayment+mortgage":"Down payment + mortgage",
- "insurance+reserve":"Insurance + thoda reserve","liquid reserve":"Sirf savings",
- "investment allocation":"Investment allocation","refinance/repay":"Refinance / repayment",
-}
-ALT_LABEL={
- "timeline":"Thoda aur waqt le","target":"Target thoda chhota kar",
- "mechanism":"Tarika badal",
+ "savings goal":"a savings goal","insurance+reserve":"insurance plus a small reserve",
+ "liquid reserve":"savings alone","investment allocation":"an investment plan",
+ "EMI":"a loan/EMI plan","auto loan":"a car loan","cash purchase":"paying cash",
+ "downpayment+mortgage":"a down payment plus mortgage",
+ "refinance/repay":"refinancing or repaying",
 }
 
-def greeting(hour=None, streak=0):
+def greeting(hour=None,streak=0):
     h=hour if hour is not None else 12
-    part = "Subah" if h<12 else ("Dopahar" if h<17 else "Raat")
-    s=f"{part} bhai. Hisab dekhte hain."
-    if streak>0: s+=f"  Diya {streak} din se jal raha hai."
-    else: s+="  Aaj pehli baar bol rahe ho, koi baat nahi."
+    part="Good morning" if h<12 else ("Good afternoon" if h<17 else "Good evening")
+    s=f"{part}. Let's go through it."
+    if streak>0: s+=f" {streak}-day streak going."
+    else: s+=" First time you're saying this out loud, that's fine."
     return s
 
+def smalltalk(text, streak=0):
+    t=(text or "").strip().lower()
+    if any(w in t for w in ("thanks","thank you","shukriya")):
+        return "Any time. I'm here whenever the money question comes up."
+    if any(w in t for w in ("bye","bye ")):
+        return "Take care. Your goals are saved, and I'll flag it if anything changes."
+    if any(w in t for w in ("how are you","kaise ho","kya haal","sup","what's up","whats up")):
+        return ("I'm good — I spend my time checking your numbers so you don't have to. "
+                "What's on your mind today?")
+    return ("Hello. Tell me anything about money — a goal, a worry, a bill you weren't "
+            "expecting. One line is enough to start.")
+
 def clarify(intent):
-    return intent.get("clarify","Thoda aur batao bhai.")
+    return intent.get("clarify","Tell me a bit more and we'll work it out.")
 
 def objective(intent):
     lbl=OBJ_LABEL.get(intent["objective_category"],intent["objective_category"])
-    amt=intent.get("amount")
-    h=intent.get("horizon_mo",12)
-    if amt:
-        return f"Suna main ne: {lbl} — {_inr(amt)}, {h} mahine me."
-    return f"Suna main ne: {lbl}. Paisa aur time abhi clear nahi, wo batao."
+    amt=intent.get("amount"); h=intent.get("horizon_mo",12)
+    if amt: return f"What I heard: {lbl} — {_inr(amt)}, over {h} month{'s' if h!=1 else ''}."
+    return f"What I heard: {lbl}. The amount and timing aren't clear yet."
 
 def evidence(snapshot, behaviour, results, soul=None):
     leaks=behaviour.get("top_leaks") or []
     joy=behaviour.get("joy",0)
-    lines=[f"Average mahina aana: {_inr(snapshot.income_monthly_avg)}.",
-           f"Hath me turant: {_inr(snapshot.balances.get('savings',0))}."]
+    lines=[f"Average monthly income: {_inr(snapshot.income_monthly_avg)}.",
+           f"Cash in hand right now: {_inr(snapshot.balances.get('savings',0))}."]
     mf=snapshot.balances.get("mf",0); fd=snapshot.balances.get("fd",0)
     if mf or fd:
-        lines.append(f"Parked kaagaz pe: {_inr(mf+fd)} (MF {_inr(mf)} + FD {_inr(fd)}).")
+        lines.append(f"Parked and invested: {_inr(mf+fd)} (mutual funds {_inr(mf)}, fixed deposits {_inr(fd)}).")
     if soul:
         fam=[f for f in (soul.get("household") or soul.get("family") or []) if f]
-        if fam: lines.append("Ghar ka bhaar: "+", ".join(fam)+".")
+        if fam: lines.append("Household commitments: "+", ".join(fam)+".")
         goals=[g["name"] for g in soul.get("goals",[]) if g.get("name")]
-        if goals: lines.append("Tere mann ke plan: "+", ".join(goals)+".")
+        if goals: lines.append("Goals on your mind: "+", ".join(goals)+".")
     if leaks:
         top=leaks[0]
-        lines.append(f"3 mahine me bekaar kharch: {_inr(top['total'])} ({top['count']}x {top['merchant'].split('/')[0]}).")
+        lines.append(f"Leakage over 3 months: {_inr(top['total'])} ({top['count']} orders at {top['merchant'].split('/')[0]}).")
     if joy and joy<20000:
-        lines.append(f"Apne liye kharch: sirf {_inr(joy)}. Matlab apni baari me zyada nahi kharche.")
+        lines.append(f"Spend on yourself: only {_inr(joy)}. You are being tighter than you need to be.")
     r=results[0]
-    lines.append(f"Emergency cushion: {r['emergency_mo']} mahine.")
+    lines.append(f"Emergency runway: {r['emergency_mo']} months.")
     if r.get("stress_applied"):
-        lines.append(f"Sabse kam aana: {_inr(r['income_worst_used'])} (average {_inr(r['income_avg_used'])}).")
+        lines.append(f"Worst income month: {_inr(r['income_worst_used'])} (average {_inr(r['income_avg_used'])}).")
     return lines
 
 def verdict(result, snapshot, challenge=None):
-    """Headline register + arithmetic. When J7 has authored a challenge, that text is the
-    customer-facing body - narration must not paraphrase it, or the journal and the screen
-    would disagree about what was actually said."""
     o=result["outcome"]
     need=_inr(result["monthly_need"])
     stress=result.get("stress_applied")
     limit=result.get("avail_stress_monthly",result["avail_monthly"])
     if o=="feasible":
         if stress:
-            body=(f"{need} per mahina chahiye. Tera aana seasonal hai — isliye maine hisaab teri "
-                  f"sabse kam wali mahine ({_inr(result['income_worst_used'])}) se lagaya, jabki average "
-                  f"{_inr(result['income_avg_used'])} hai. Usi hisaab se {_inr(limit)} bachta hai. "
-                  f"Emergency {result['emergency_mo']} mahine. Ye plan chalega.")
+            body=(f"You need {need} a month. Your income is seasonal, so I ran the numbers against "
+                  f"your worst month ({_inr(result['income_worst_used'])}) rather than your average "
+                  f"({_inr(result['income_avg_used'])}). Even then {_inr(limit)} is free each month. "
+                  f"Emergency cover is {result['emergency_mo']} months. This plan works.")
         else:
-            body=(f"{need} per mahina chahiye, aur tere {limit} khaane me se niklta hai. "
-                  f"Emergency {result['emergency_mo']} mahine bacha hai. Ye plan chalega.")
+            body=(f"You need {need} a month and {_inr(limit)} is free each month. "
+                  f"Emergency cover is {result['emergency_mo']} months. This plan works.")
         return "GO AHEAD", body
     if o=="gap":
-        return "YE HO NHI SAKTA AS IS", (challenge or
-                (f"{need} chahiye mahina, lekin comfortable limit {_inr(limit)} hai. "
-                 f"Matlab har mahine {_inr(result['gap_amount'])} ka shortfall."))
-    return "EK GALTI MILI", (challenge or
-            "Sirf paise bachana is maqsad ke liye sahi nahi hai. Ek aur rasta hai.")
+        return "NOT POSSIBLE AS IT STANDS", (challenge or
+                (f"You need {need} a month but the comfortable limit is {_inr(limit)}. "
+                 f"That leaves a {_inr(result['gap_amount'])} shortfall every month."))
+    return "THAT'S THE WRONG TOOL", (challenge or
+            "Savings alone cannot cover a large medical shock, so this needs a different route.")
 
 def alternatives(alts):
-    """J7 already authors these in the customer's language; do not re-translate."""
+    """J7 already authors these in plain language; do not re-translate."""
     return [a["description"] for a in alts]
 
 def decision_options():
     return [
-      {"id":"accept","label":"Theek hai, pakka kar do","hint":"Yehi plan meri financial memory me chala jayega"},
-      {"id":"modify","label":"Thoda aur waqt de do","hint":"Timeline badlunga, dubara hisaab lagao"},
-      {"id":"reject","label":"Abhi nahi chahiye","hint":"Isko band kar do, yaad rakh lena"},
+      {"id":"accept","label":"Yes, lock it in","hint":"This goes into my memory as your plan"},
+      {"id":"modify","label":"Change the numbers","hint":"Set your own amount, timeline or method"},
+      {"id":"reject","label":"Not right now","hint":"Close this off, but I'll remember it"},
     ]
 
 def confirmation(goal):
-    return (f"Ho gaya. {goal['goal_id']} pakka: {OBJ_LABEL.get(goal['objective'],goal['objective'])}, "
+    return (f"Done. {goal['goal_id']} is locked: {OBJ_LABEL.get(goal['objective'],goal['objective'])}, "
             f"{MECH_LABEL.get(goal['mechanism'],goal['mechanism'])} — {_inr(goal['target'])} "
-            f"{goal['timeline']} mahine me. Ye main yaad rakhunga aur jab bhi kuch badlega, batayega.")
+            f"over {goal['timeline']} months. I'll hold on to it and tell you if anything changes.")
 
 def memory_line(rec):
-    if rec.get("tombstone"): return f"{rec['goal_id']} — hata diya gaya (consent change)."
+    if rec.get("tombstone"): return f"{rec['goal_id']} — removed (consent change)."
     return (f"{rec['goal_id']}: {OBJ_LABEL.get(rec['objective'],rec['objective'])} | "
             f"{MECH_LABEL.get(rec['mechanism'],rec['mechanism'])} — {_inr(rec['target'])} / {rec['timeline']}mo "
             f"[{rec['state_version']}]")
 
-TRIGGER_LABEL={"large_withdrawal":"ek bada kharch","income_drop":"aana kam ho gaya"}
+TRIGGER_LABEL={"large_withdrawal":"a large withdrawal","income_drop":"your income dropped"}
 def change_alert(kind, trigger, reanalyses):
-    tl=TRIGGER_LABEL.get(trigger.get("type"),"kuch badla")
-    h=f"Kuch badla: {tl}. Dekhta hoon tera kya plan chal raha hai."
+    tl=TRIGGER_LABEL.get(trigger.get("type"),"something changed")
+    h=f"I noticed {tl}. Let me re-check which of your plans still hold."
     for o in reanalyses:
-        if o.get("new_outcome")=="feasible":
-            h+=f"  {o['goal_id']} abhi bhi theek hai."
-        else:
-            h+=f"  {o['goal_id']} abhi at risk hai — {o.get('challenge','')}"
+        if o.get("new_outcome")=="feasible": h+=f" {o['goal_id']} is still fine."
+        else: h+=f" {o['goal_id']} is now at risk — {o.get('challenge','')}"
     return h
 
 def pending_note(status):
     if status=="analysis_pending":
-        return "Aaj nahi bol paunga — meri limit khatam ho gayi. Kal poochh lena, koi jaldi nahi hai."
+        return "My calculation engine isn't available right now, so I'm not going to guess. Ask me again in a moment."
     return ""

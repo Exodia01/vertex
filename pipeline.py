@@ -4,6 +4,7 @@ from j1_ingest import ingest, Quarantine
 from j2_snapshot import build_snapshot
 from j3_state import JournalStore
 from j4_llm import intent_extractor, sentiment_detector
+from j4_intent import is_small_talk
 from j5_mechanism import candidates
 from j6_feasibility import compute
 from j7_challenge import NudgeLog
@@ -15,6 +16,13 @@ from audit import AuditLog
 from contracts import PINNED
 
 CUSTOMER_REF="cust_opaque_7f3a"
+_OBJ={"travel":"a trip","asset":"a big purchase","protection":"protecting your family",
+      "liquidity":"keeping money aside","wealth":"growing your money","debt":"clearing a loan"}
+def _inr(n):
+    n=float(n)
+    if n>=10000000: return f"Rs {n/10000000:.2f} Cr"
+    if n>=100000: return f"Rs {n/100000:.2f} L"
+    return f"Rs {int(n):,}"
 MODIFIER_TO_STATED={"liquid reserve":"savings","insurance+reserve":"insurance",
                     "savings goal":"savings","investment allocation":"investment",
                     "EMI":"loan","auto loan":"loan"}
@@ -61,6 +69,10 @@ class Pipeline:
         self.baseline=self.snapshot
     def submit(self, text, amount_override=None, horizon_override=None):
         aid=f"asp_{next(_ids):03d}"
+        if is_small_talk(text):
+            # Nothing financial to analyse. Say so warmly instead of firing a menu at them.
+            return {"aspiration_id":aid,"status":"smalltalk","results":[],
+                    "intent":{"objective_category":"unknown","confidence":0.0}}
         self.store.transition(aid,None,"raw_observation","observed_data",{"raw_text":text},text,"customer")
         self._log("aspiration.created",aspiration_id=aid)
         intent=intent_extractor()(text)
@@ -80,36 +92,7 @@ class Pipeline:
             return {"aspiration_id":aid,"status":"needs_clarification","clarify":intent.get("clarify"),"intent":intent}
         self.store.transition(aid,"raw_observation","interpreted_expectation","ai_hypothesis",intent,text,"ai")
         self._log("intent.extracted",aspiration_id=aid,objective=intent["objective_category"],confidence=intent["confidence"])
-        cands=candidates(intent)
-        self.store.transition(aid,"interpreted_expectation","banking_equivalent","ai_hypothesis",{"candidates":cands},text,"ai")
-        self._log("mechanism.candidates.generated",aspiration_id=aid,count=len(cands))
-        try:
-            results=[compute(c,self.snapshot,self.bench) for c in cands]
-        except Exception as e:
-            # Anchor 1 §15: engine unavailable -> challenge generation is DEFERRED, the
-            # aspiration stays in analysis_pending, and the customer is told. Never a guess.
-            self._log("feasibility.deferred",actor="deterministic_engine",
-                      aspiration_id=aid,reason=type(e).__name__)
-            self.store.transition(aid,"banking_equivalent","analysis","observed_data",
-                                  {"results":[],"deferred":True},type(e).__name__,"deterministic_engine")
-            return {"aspiration_id":aid,"status":"analysis_pending","candidates":cands,
-                    "results":[],"deferred":True,
-                    "note":("Mera hisaab engine abhi available nahi hai, isliye main koi "
-                            "bhi andaaza nahi laga raha. Thodi der me dubara puchh lena.")}
-        for r in results: self._log("feasibility.computed",aspiration_id=aid,mechanism=r["mechanism"],outcome=r["outcome"],gap=r["gap_amount"])
-        best=results[0]
-        self.store.transition(aid,"banking_equivalent","analysis","observed_data",{"results":results},self.snapshot.balances and "mock_aa","deterministic_engine")
-        packet={"aspiration_id":aid,"status":"analysed","intent":intent,"candidates":cands,"results":results}
-        if best["outcome"]!="feasible":
-            ch=self.nudges.issue(aid,best,all_results=results,signal=signal)
-            if ch:
-                self.store.transition(aid,"analysis","challenge","ai_hypothesis",{"challenge":ch["challenge"],"alternatives":ch["alternatives"]},best["mechanism"],"ai")
-                self._log("challenge.issued",aspiration_id=aid,nudge_count=ch["nudge_count"])
-                packet.update(ch)
-            else:
-                packet["status"]="analysis_pending"
-                packet["note"]="nudge cap reached, challenge deferred"
-        return packet
+        return self._analyse(aid,intent,text,signal)
     def respond(self, aspiration_id, response, modified=None, sentiment=None):
         hist=self.store.history(aspiration_id)
         signal=self.signals.get(aspiration_id)
@@ -117,7 +100,14 @@ class Pipeline:
             for e in reversed(hist):
                 if e["state"]==state: return e
             return None
-        intent=latest("interpreted_expectation")["payload"]
+        # A clarified aspiration records its merged intent on the customer_response entry,
+        # because interpreted_expectation -> interpreted_expectation is not a legal edge.
+        intent=None
+        for e in reversed(hist):
+            if e["state"]=="interpreted_expectation": intent=e["payload"]; break
+            if e["state"]=="customer_response" and "objective_category" in e["payload"]:
+                intent=e["payload"]; break
+        if intent is None: intent=latest("interpreted_expectation")["payload"]
         latest_be=latest("banking_equivalent")
         cands=latest_be["payload"]["candidates"]
         results=latest("analysis")["payload"]["results"]
@@ -210,6 +200,129 @@ class Pipeline:
              "revisions":[r["state_version"] for r in self.memory.revisions(goal_id)]}
         if "internal" in res: out["internal"]=res["internal"]
         return out
+
+    def continue_aspiration(self, aspiration_id, text):
+        """U2: answer a clarifying question instead of orphaning the aspiration and starting over.
+
+        The pending aspiration already holds the original words and whatever was understood. The
+        answer is merged in and the flow resumes at J4 -> J5 -> J6 on the same aspiration_id, so
+        the decision path stays one path."""
+        hist=self.store.history(aspiration_id)
+        if not hist: return {"status":"unknown_aspiration"}
+        prior=next((e for e in reversed(hist) if e["state"]=="interpreted_expectation"),None)
+        if prior is None: return {"status":"nothing_to_continue"}
+        base=dict(prior["payload"])
+        original=(prior.get("evidence_ref") or "")
+        signal=self.signals.get(aspiration_id)
+        try:
+            answer=intent_extractor()(text)
+        except Exception:
+            answer=extract_intent(text)
+        # The answer supplies what the question asked for: keep whatever the first pass
+        # understood unless the answer gives something better.
+        merged=dict(base)
+        if answer.get("amount"): merged["amount"]=answer["amount"]
+        if answer.get("horizon_mo") and answer.get("horizon_mo")!=12: merged["horizon_mo"]=answer["horizon_mo"]
+        if answer.get("objective_category") not in ("unknown","contradictory"):
+            merged["objective_category"]=answer["objective_category"]
+        if answer.get("stated_mechanism"): merged["stated_mechanism"]=answer["stated_mechanism"]
+        if answer.get("clarify"): merged["clarify"]=answer["clarify"]
+        merged["clarified_from"]=original
+        merged["clarification_answer"]=text
+        self._log("aspiration.clarified",actor="customer",aspiration_id=aspiration_id,answer=text[:120])
+        # The answer is a customer response, then the legal loop-back re-enters J5.
+        self.store.transition(aspiration_id,"interpreted_expectation","customer_response",
+                              "customer_confirmed_data",
+                              dict(merged,response="clarified",answer=text),text,"customer")
+        return self._analyse(aspiration_id,merged,text,signal,frm="customer_response")
+
+    def _analyse(self, aid, intent, text, signal=None, frm="interpreted_expectation"):
+        """Shared J4->J5->J6 tail. frm is the state we are entering from, so a clarified
+        aspiration can re-enter via the legal customer_response -> banking_equivalent edge."""
+        cands=candidates(intent)
+        self.store.transition(aid,frm,"banking_equivalent","ai_hypothesis",
+                              {"candidates":cands},text,"ai")
+        self._log("mechanism.candidates.generated",aspiration_id=aid,count=len(cands))
+        try:
+            results=[compute(c,self.snapshot,self.bench) for c in cands]
+        except Exception as e:
+            self._log("feasibility.deferred",actor="deterministic_engine",
+                      aspiration_id=aid,reason=type(e).__name__)
+            self.store.transition(aid,"banking_equivalent","analysis","observed_data",
+                                  {"results":[],"deferred":True},type(e).__name__,"deterministic_engine")
+            return {"aspiration_id":aid,"status":"analysis_pending","candidates":cands,"results":[],
+                    "deferred":True,
+                    "note":("Mera hisaab engine abhi available nahi hai, isliye main koi bhi "
+                            "andaaza nahi laga raha. Thodi der me dubara puchh lena.")}
+        for r in results:
+            self._log("feasibility.computed",aspiration_id=aid,mechanism=r["mechanism"],
+                      outcome=r["outcome"],gap=r["gap_amount"])
+        best=results[0]
+        self.store.transition(aid,"banking_equivalent","analysis","observed_data",
+                              {"results":results},"mock_aa","deterministic_engine")
+        packet={"aspiration_id":aid,"status":"analysed","intent":intent,"candidates":cands,
+                "results":results}
+        if best["outcome"]!="feasible":
+            ch=self.nudges.issue(aid,best,all_results=results,signal=signal)
+            if ch:
+                self.store.transition(aid,"analysis","challenge","ai_hypothesis",
+                                      {"challenge":ch["challenge"],"alternatives":ch["alternatives"]},
+                                      best["mechanism"],"ai")
+                self._log("challenge.issued",aspiration_id=aid,nudge_count=ch["nudge_count"])
+                packet.update(ch)
+            else:
+                packet["status"]="analysis_pending"
+                packet["note"]="nudge cap reached, challenge deferred"
+        return packet
+
+    def assess_goal(self, goal):
+        """U4: re-derive a goal's standing against the CURRENT snapshot, without writing."""
+        cand={"mechanism":goal["mechanism"],"required_capital":goal["target"],
+              "horizon_mo":goal["timeline"],
+              "liquidity_need":"high" if goal["objective"] in ("protection","liquidity") else "med",
+              "financing_need":("loan" in goal["mechanism"].lower() or "emi" in goal["mechanism"].lower())}
+        try: feas=compute(cand,self.snapshot,self.bench)
+        except Exception: return None
+        o=feas["outcome"]
+        headroom=round(feas["avail_stress_monthly"]-feas["monthly_need"],2)
+        if o=="at-risk":
+            status,why,act=("at_risk",
+                "Wrong method — savings on their own will not absorb a large medical bill.",
+                "Switch to insurance plus a small reserve")
+        elif o=="gap":
+            status,why,act=("behind",
+                f"A {_inr(feas['gap_amount'])} shortfall every month.",
+                "Give it more time, or make the target smaller")
+        elif feas["stress_applied"] and headroom<feas["monthly_need"]*0.5:
+            status,why,act=("tight",
+                f"It works, but in your worst income month only {_inr(headroom)} is spare.",
+                "Keep an eye on the season")
+        else:
+            status,why,act=("on_track",
+                f"You need {_inr(feas['monthly_need'])} a month and have {_inr(feas['avail_stress_monthly'])} free.",
+                f"Next check-in: {goal.get('timeline','?')} months")
+        return {"goal_id":goal["goal_id"],"objective":goal["objective"],
+                "mechanism":goal["mechanism"],"label":_OBJ.get(goal["objective"],goal["objective"]),
+                "target":goal["target"],"timeline":goal["timeline"],
+                "status":status,"why":why,"next_action":act,
+                "monthly_need":feas["monthly_need"],"headroom":headroom,
+                "priority":self.priority.get(goal["goal_id"],0),
+                "state_version":goal.get("state_version")}
+
+    def goals_view(self, requester=None):
+        """U4: every live goal, re-assessed now, in the order they should be discussed."""
+        self.audit_log.record_read(requester or "customer","goals_view",self._trace("goals"),
+                                   fields=["goal_id","status"],
+                                   purpose="journal_analysis",
+                                   subject=self.customer_ref)
+        rows=[]
+        for g in self.memory.revisions_of_customer(self.customer_ref) if hasattr(self.memory,"revisions_of_customer") \
+                 else [r for r in self.memory.query(self.customer_ref)
+                       if r.get("record_type")=="goal" and not r.get("tombstone")]:
+            a=self.assess_goal(g)
+            if a: rows.append(a)
+        order={"at_risk":0,"behind":1,"tight":2,"on_track":3}
+        return sorted(rows,key=lambda r:(-r["priority"],order.get(r["status"],9),-r["target"]))
 
     def raise_priority(self, goal_id, reason, actor="deterministic_engine"):
         """J10 priority.raised has to change behaviour to be worth emitting. A raised goal

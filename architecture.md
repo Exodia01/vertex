@@ -113,6 +113,33 @@ though a feasible alternative exists. A modify response re-runs **J5 and J6** �
 mechanism regenerates the candidate set and flips the verdict — rather than just redoing the
 arithmetic on the old construct.
 
+## 7b. The customer-facing flow (U1-U4)
+
+The advice engine was finished before the interface for acting on it was, which was the wrong
+order. These four closed that gap:
+
+- **U1 - the choice step is editable, not a canned button.** A challenged customer is handed
+  three real inputs prefilled with the engine's own numbers: target amount, timeline in months,
+  and the mechanisms actually considered. The panel shows live arithmetic as they type
+  ("Rs 20,833/mo chahiye, tera limit Rs 44,000, Rs 23,167 bachega"), so the consequence of a
+  change is visible before it is committed. `_editable()` builds the block; the backend already
+  accepted target/timeline/mechanism, so this exposed no new contract surface.
+- **U2 - a clarifying question is answerable.** Previously the app asked a question and then
+  orphaned the aspiration; the next message started a fresh one and the context was lost. Now
+  `POST /api/aspirations/{id}/continue` merges the answer into the pending intent and re-enters
+  J5 -> J6 on the same aspiration_id. The state machine gained one edge,
+  `interpreted_expectation -> customer_response`, because a clarifying answer genuinely *is* a
+  customer response; the merged intent rides that entry, since a self-loop is not a legal edge.
+- **U3 - the thread is a real conversation.** The transcript persists in `sessionStorage` and
+  re-renders on load, so it survives a page refresh and reads as one continuous conversation
+  rather than a stack of disconnected cards.
+- **U4 - goals have live standing.** `GET /api/goals` re-derives every goal against the current
+  snapshot and reports `on_track` / `tight` / `behind` / `at_risk` with the reason and the next
+  action, ordered by priority then severity. This is what gives a reason to return daily; a flat
+  list of sentences did not.
+
+All four are asserted in `tools/gate.py`, not just claimed.
+
 ## 8. The language layer (J4 / J11) and how it is arbitrated
 
 Anchor 1 §11 assigns natural-language understanding and sentiment detection to the AI layer.
@@ -164,7 +191,8 @@ rather than picks.
   It provides integrity, tamper detection and tenant isolation, not semantic security. The
   AEAD/KMS replacement path is named but not taken.
 - **Single-tenant, no authentication.** Access control is enforced in the store, not at a
-  transport. Anyone who can reach the process can call the API as the customer.
+  transport. Anyone who can reach the process can call the API as the customer. The transcript
+  also lives in browser `sessionStorage`, so there is no server-side conversation history yet.
 - **The model was evaluated on one machine with one model.** No cross-model comparison.
 - `priority.raised` reorders check-ins in-process only; nothing persists the ordering.
 - Anchor 2 has no spec, so IM-1 and the §21 consumer contract are untested end to end.

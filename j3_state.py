@@ -1,7 +1,8 @@
 """J3 state machine §8. Append-only, illegal transitions rejected."""
 LEGAL={
  "raw_observation":["interpreted_expectation"],
- "interpreted_expectation":["banking_equivalent"],
+ # a clarifying question is answered by the customer, which is a customer_response
+ "interpreted_expectation":["banking_equivalent","customer_response"],
  "banking_equivalent":["analysis"],
  "analysis":["challenge","customer_response","stabilized_state"],
  "challenge":["customer_response"],

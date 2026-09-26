@@ -127,8 +127,8 @@ def _strip_numbers(d):
     """Invariant 1: discard anything numeric the model tried to supply."""
     return {k:v for k,v in d.items() if k not in NUMERIC_KEYS}
 
-DISAGREE_CLARIFY=("Suna main ne is baat me do alag pehlu pakde hain. Tere liye pehla kya hai? "
-                  "Ek line me batao, phir doosre ko usi hisaab se dekhta hun.")
+DISAGREE_CLARIFY=("I read that two different ways. Which one is it for you? "
+                  "One line is enough, then I will work out the other on the same basis.")
 
 def _model_intent(text):
     d=_strip_numbers(_parse(_ask(INTENT_PROMPT+text.strip(),INTENT_SCHEMA)) or {})

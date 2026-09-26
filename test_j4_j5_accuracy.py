@@ -30,6 +30,14 @@ print(f"    accuracy = {correct}/{len(clear)} = {acc:.0%}")
 check("accuracy >= 90% on labeled clear set",acc>=0.90,f"{acc:.0%}")
 check("accuracy floor declared in fixture",len(clear)>0)
 
+print("=== J4.1b small talk is conversation, not a failed query ===")
+from j4_intent import is_small_talk
+for s in ["hi","hello","hi kaise ho","how are you","thanks","sab badhiya","kaise ho","bye"]:
+    check(f"small talk: {s!r}",is_small_talk(s))
+for s in ["Japan trip 2.5L in 2 months","I want to save 3L for medical emergencies",
+          "15L car next year","save 2L","car"]:
+    check(f"NOT small talk: {s[:34]!r}",not is_small_talk(s))
+
 print("=== J4.2 ambiguous -> clarifying question, never a guess ===")
 for c in ambig:
     r=extract_intent(c["text"])

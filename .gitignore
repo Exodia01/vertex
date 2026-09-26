@@ -5,3 +5,5 @@ __pycache__/
 # runtime data
 memory.jsonl
 memory_test.jsonl
+chat_log.jsonl
+memory_gate.jsonl

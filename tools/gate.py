@@ -36,6 +36,20 @@ run("P0 gate (contracts/fixtures/version/audit)",["tools/gate_p0.py"])
 run("observability (confidence + engine latency)",["tools/observability.py"])
 
 print("=== app boots and serves ===")
+# If something already holds the port, the spawned app cannot bind and the gate would
+# silently test that other process instead. Fail loudly instead.
+import socket as _sock
+_probe=_sock.socket(); _probe.settimeout(1)
+_inuse=False
+try:
+    _probe.connect(("127.0.0.1",8848)); _inuse=True
+except OSError:
+    pass
+finally:
+    _probe.close()
+if _inuse:
+    print("FAIL port 8848 already in use".ljust(38),"stop the other server first")
+    fails.append("port 8848 free before gate")
 import time, urllib.request, signal
 class PIPE_probe: pass
 env=dict(os.environ); env["IASPIRE_MEMORY_SECRET"]="gate-secret"
@@ -46,11 +60,31 @@ try:
         time.sleep(0.3)
         try:
             with urllib.request.urlopen("http://127.0.0.1:8848/",timeout=2) as r:
-                ok = r.status==200 and b"Raat" in r.read()
+                body=r.read()
+                ok = r.status==200 and b"iASPIRE Journal" in body and b"edTarget" in body
                 break
         except Exception: pass
     print(("PASS " if ok else "FAIL ")+"app serves UI".ljust(38),"")
     if not ok: fails.append("app serves UI")
+    with urllib.request.urlopen("http://127.0.0.1:8848/data",timeout=5) as dr:
+        dbody=dr.read()
+    dok=dr.status==200 and b"Stored data" in dbody and b"/api/goals" in dbody
+    print(("PASS " if dok else "FAIL ")+"stored-data page renders".ljust(38),"")
+    if not dok: fails.append("stored-data page renders")
+    rq1=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        data=json.dumps({"text":"I want to save 3L for medical emergencies"}).encode(),
+        headers={"Content-Type":"application/json"})
+    urllib.request.urlopen(rq1,timeout=20).read()
+    tr=json.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/chat",timeout=5).read())
+    roles=[t["role"] for t in tr["turns"]]
+    bothsides=("user" in roles) and ("app" in roles)
+    print(("PASS " if bothsides else "FAIL ")+"transcript stored server-side".ljust(38),
+          f"{len(roles)} turns, both sides={bothsides}")
+    if not bothsides: fails.append("transcript stored server-side")
+    alltext=" ".join(t["text"] for t in tr["turns"] if t["role"]=="app").lower()
+    hindi=[w for w in ("bhai","tera","aap","hisaab","chahiye","mahine","karna","paisa") if w in alltext]
+    print(("PASS " if not hindi else "FAIL ")+"all app replies are English".ljust(38),str(hindi))
+    if hindi: fails.append("all app replies are English")
     if ok:
         with urllib.request.urlopen("http://127.0.0.1:8848/api/health",timeout=5) as h:
             health=json.loads(h.read())
@@ -92,6 +126,31 @@ try:
         print(("PASS " if challenged else "FAIL ")+"adversary challenges wrong construct".ljust(38),
               verd[0]["headline"] if verd else "no verdict")
         if not challenged: fails.append("adversary challenges wrong construct")
+        # U2: a clarifying question must be answerable, not orphaned
+        vq=json.loads(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+            data=json.dumps({"text":"hmm paisa chahiye"}).encode(),
+            headers={"Content-Type":"application/json"}),timeout=10).read())
+        asked=any(s["kind"]=="clarify" for s in vq["stages"])
+        cont=json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:8848/api/aspirations/{vq['aspiration_id']}/continue",
+            data=json.dumps({"text":"Japan trip 2.5L in 4 months"}).encode(),
+            headers={"Content-Type":"application/json"}),timeout=10).read())
+        resumed=any(s["kind"]=="verdict" for s in cont["stages"])
+        print(("PASS " if (asked and resumed) else "FAIL ")+"clarifying question is answerable".ljust(38),
+              f"asked={asked} resumed={resumed}")
+        if not (asked and resumed): fails.append("clarifying question is answerable")
+        # U1: the choice step must be editable, not one canned button
+        ed=[s for s in cont["stages"] if s["kind"]=="options" and s.get("editable")]
+        ok_ed=bool(ed) and ed[0]["editable"]["target"]>0 and ed[0]["editable"]["timeline_mo"]>0
+        print(("PASS " if ok_ed else "FAIL ")+"choice step is editable".ljust(38),
+              (f"target={ed[0]['editable']['target']} timeline={ed[0]['editable']['timeline_mo']}" if ed else "no editable block"))
+        if not ok_ed: fails.append("choice step is editable")
+        # U4: goals view with live standing
+        gv=json.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/goals",timeout=5).read())
+        st={g["status"] for g in gv["goals"]} if gv["goals"] else set()
+        ok_gv=bool(gv["goals"]) and all(g.get("next_action") for g in gv["goals"]) and st <= {"on_track","tight","behind","at_risk"}
+        print(("PASS " if ok_gv else "FAIL ")+"goals view has standing + next action".ljust(38),str(sorted(st)))
+        if not ok_gv: fails.append("goals view has standing + next action")
         req2=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
             data=json.dumps({"text":"Japan 2.5L in 2 months"}).encode(),
             headers={"Content-Type":"application/json"})
