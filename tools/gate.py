@@ -5,6 +5,7 @@ Run: python3 tools/gate.py
 import os, json, subprocess, sys
 ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
+GATE_PORT=8899   # never 8848: the gate must not touch the server the user is looking at
 fails=[]
 def run(label,args,expect=0):
     r=subprocess.run([sys.executable]+args,capture_output=True,text=True)
@@ -42,40 +43,42 @@ import socket as _sock
 _probe=_sock.socket(); _probe.settimeout(1)
 _inuse=False
 try:
-    _probe.connect(("127.0.0.1",8848)); _inuse=True
+    _probe.connect(("127.0.0.1",GATE_PORT)); _inuse=True
 except OSError:
     pass
 finally:
     _probe.close()
 if _inuse:
-    print("FAIL port 8848 already in use".ljust(38),"stop the other server first")
-    fails.append("port 8848 free before gate")
+    print(f"FAIL gate port {GATE_PORT} already in use".ljust(38),"stop the other gate first")
+    fails.append("gate port free")
 import time, urllib.request, signal
 class PIPE_probe: pass
-env=dict(os.environ); env["IASPIRE_MEMORY_SECRET"]="gate-secret"
+env=dict(os.environ); env["IASPIRE_MEMORY_SECRET"]="gate-secret"; env["PORT"]=str(GATE_PORT)
+env["IASPIRE_MEMORY_FILE"]="memory_gate.jsonl"
+env["IASPIRE_CHAT_FILE"]="chat_gate.jsonl"
 proc=subprocess.Popen([sys.executable,"app.py"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=env)
 try:
     ok=False
     for _ in range(30):
         time.sleep(0.3)
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8848/",timeout=2) as r:
+            with urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/",timeout=2) as r:
                 body=r.read()
                 ok = r.status==200 and b"iASPIRE Journal" in body and b"edTarget" in body
                 break
         except Exception: pass
     print(("PASS " if ok else "FAIL ")+"app serves UI".ljust(38),"")
     if not ok: fails.append("app serves UI")
-    with urllib.request.urlopen("http://127.0.0.1:8848/data",timeout=5) as dr:
+    with urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/data",timeout=5) as dr:
         dbody=dr.read()
     dok=dr.status==200 and b"Stored data" in dbody and b"/api/goals" in dbody
     print(("PASS " if dok else "FAIL ")+"stored-data page renders".ljust(38),"")
     if not dok: fails.append("stored-data page renders")
-    rq1=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+    rq1=urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
         data=json.dumps({"text":"I want to save 3L for medical emergencies"}).encode(),
         headers={"Content-Type":"application/json"})
     urllib.request.urlopen(rq1,timeout=20).read()
-    tr=json.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/chat",timeout=5).read())
+    tr=json.loads(urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/api/chat",timeout=5).read())
     roles=[t["role"] for t in tr["turns"]]
     bothsides=("user" in roles) and ("app" in roles)
     print(("PASS " if bothsides else "FAIL ")+"transcript stored server-side".ljust(38),
@@ -86,7 +89,7 @@ try:
     print(("PASS " if not hindi else "FAIL ")+"all app replies are English".ljust(38),str(hindi))
     if hindi: fails.append("all app replies are English")
     if ok:
-        with urllib.request.urlopen("http://127.0.0.1:8848/api/health",timeout=5) as h:
+        with urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/api/health",timeout=5) as h:
             health=json.loads(h.read())
         print("     health:",json.dumps(health))
         llm=health.get("llm_layer",{})
@@ -100,16 +103,16 @@ try:
         if not sealed: fails.append("memory sealed at rest")
         single="audit" not in dir(PIPE_probe) if False else True
         import json as _j
-        au=_j.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/audit",timeout=5).read())
+        au=_j.loads(urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/api/audit",timeout=5).read())
         has_flat="audit" in au
         print(("PASS " if not has_flat else "FAIL ")+"no parallel flat audit view".ljust(38),"")
         if has_flat: fails.append("no parallel flat audit view")
         # the on-disk memory store must not contain plaintext once a goal is written
-        req0=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        req0=urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"Dubai family trip 1.2L in 3 months"}).encode(),
             headers={"Content-Type":"application/json"})
         d0=_j.loads(urllib.request.urlopen(req0,timeout=5).read())
-        urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"__respond__","aspiration_id":d0["aspiration_id"],
                              "response":"accept"}).encode(),
             headers={"Content-Type":"application/json"}),timeout=5).read()
@@ -117,7 +120,7 @@ try:
         leak=[w for w in ("travel","120000","savings goal") if w in blob]
         print(("PASS " if not leak else "FAIL ")+"no plaintext in memory file".ljust(38),str(leak))
         if leak: fails.append("no plaintext in memory file")
-        req=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        req=urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"I want to save 3L for medical emergencies"}).encode(),
             headers={"Content-Type":"application/json"})
         d=json.loads(urllib.request.urlopen(req,timeout=5).read())
@@ -127,12 +130,12 @@ try:
               verd[0]["headline"] if verd else "no verdict")
         if not challenged: fails.append("adversary challenges wrong construct")
         # U2: a clarifying question must be answerable, not orphaned
-        vq=json.loads(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        vq=json.loads(urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"hmm paisa chahiye"}).encode(),
             headers={"Content-Type":"application/json"}),timeout=10).read())
         asked=any(s["kind"]=="clarify" for s in vq["stages"])
         cont=json.loads(urllib.request.urlopen(urllib.request.Request(
-            f"http://127.0.0.1:8848/api/aspirations/{vq['aspiration_id']}/continue",
+            f"http://127.0.0.1:{GATE_PORT}/api/aspirations/{vq['aspiration_id']}/continue",
             data=json.dumps({"text":"Japan trip 2.5L in 4 months"}).encode(),
             headers={"Content-Type":"application/json"}),timeout=10).read())
         resumed=any(s["kind"]=="verdict" for s in cont["stages"])
@@ -146,42 +149,76 @@ try:
               (f"target={ed[0]['editable']['target']} timeline={ed[0]['editable']['timeline_mo']}" if ed else "no editable block"))
         if not ok_ed: fails.append("choice step is editable")
         # U4: goals view with live standing
-        gv=json.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/goals",timeout=5).read())
+        gv=json.loads(urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/api/goals",timeout=5).read())
         st={g["status"] for g in gv["goals"]} if gv["goals"] else set()
         ok_gv=bool(gv["goals"]) and all(g.get("next_action") for g in gv["goals"]) and st <= {"on_track","tight","behind","at_risk"}
         print(("PASS " if ok_gv else "FAIL ")+"goals view has standing + next action".ljust(38),str(sorted(st)))
         if not ok_gv: fails.append("goals view has standing + next action")
-        req2=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        req2=urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"Japan 2.5L in 2 months"}).encode(),
             headers={"Content-Type":"application/json"})
         d2=json.loads(urllib.request.urlopen(req2,timeout=5).read())
         gapped = any(s["kind"]=="verdict" and s["outcome"]=="gap" for s in d2["stages"])
         print(("PASS " if gapped else "FAIL ")+"gap produces a challenge".ljust(38),"")
         if not gapped: fails.append("gap produces a challenge")
+    print("=== regressions: a real browser is concurrent and may chunk ===")
+    import threading as _th, http.client as _hc
+    _res={}
+    def _hit(i):
+        c=_hc.HTTPConnection("127.0.0.1",GATE_PORT,timeout=25)
+        try:
+            c.request("POST","/api/flow/say",
+                      json.dumps({"text":"Japan trip 2.5L in 2 months"}),
+                      {"Content-Type":"application/json"})
+            r=c.getresponse(); _res[i]=r.status; r.read()
+        except Exception as e: _res[i]=f"ERR {type(e).__name__}"
+        finally: c.close()
+    _ths=[_th.Thread(target=_hit,args=(i,)) for i in range(4)]
+    [_t.start() for _t in _ths]; [_t.join() for _t in _ths]
+    _conc=all(v==200 for v in _res.values())
+    print(("PASS " if _conc else "FAIL ")+"4 concurrent posts all answered".ljust(38),
+          str(sorted(map(str,_res.values()))))
+    if not _conc: fails.append("4 concurrent posts all answered")
+    try:
+        c=_hc.HTTPConnection("127.0.0.1",GATE_PORT,timeout=25)
+        c.putrequest("POST","/api/flow/say")
+        c.putheader("Content-Type","application/json")
+        c.putheader("Transfer-Encoding","chunked")
+        c.endheaders()
+        _d=json.dumps({"text":"Dubai family trip 1.2L in 3 months"}).encode()
+        c.send(b"%x\r\n%s\r\n0\r\n\r\n"%(len(_d),_d))
+        r=c.getresponse(); _b=r.read().decode(); c.close()
+        _ok=(r.status==200 and "verdict" in _b)
+        print(("PASS " if _ok else "FAIL ")+"chunked request body understood".ljust(38),str(r.status))
+        if not _ok: fails.append("chunked request body understood")
+    except Exception as e:
+        print("FAIL chunked request body understood".ljust(38),str(e)[:40])
+        fails.append("chunked request body understood")
 finally:
     proc.send_signal(signal.SIGTERM); proc.wait(timeout=5)
 
 print("=== the app must be fully functional with the model layer unreachable ===")
-dead=dict(os.environ)
+dead=dict(os.environ); dead["PORT"]=str(GATE_PORT)
 dead["IASPIRE_LLM"]="1"; dead["IASPIRE_LLM_PROVIDER"]="ollama"
 dead["OLLAMA_URL"]="http://127.0.0.1:59999"; dead["IASPIRE_LLM_TIMEOUT"]="2"
-if os.path.exists("memory_gate.jsonl"): os.remove("memory_gate.jsonl")
+for _f in ("memory_gate.jsonl","chat_gate.jsonl"):
+        if os.path.exists(_f): os.remove(_f)
 p2=subprocess.Popen([sys.executable,"app.py"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=dead)
 try:
     up=False
     for _ in range(30):
         time.sleep(0.3)
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8848/",timeout=2) as r: up=(r.status==200); break
+            with urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/",timeout=2) as r: up=(r.status==200); break
         except Exception: pass
     print(("PASS " if up else "FAIL ")+"serves with model layer down".ljust(38),"")
     if not up: fails.append("serves with model layer down")
     if up:
-        h=json.loads(urllib.request.urlopen("http://127.0.0.1:8848/api/health",timeout=5).read())
+        h=json.loads(urllib.request.urlopen(f"http://127.0.0.1:{GATE_PORT}/api/health",timeout=5).read())
         fb=h["llm_layer"]["active"]=="deterministic_fallback"
         print(("PASS " if fb else "FAIL ")+"reports deterministic_fallback".ljust(38),h["llm_layer"]["active"])
         if not fb: fails.append("reports deterministic_fallback")
-        rq=urllib.request.Request("http://127.0.0.1:8848/api/flow/say",
+        rq=urllib.request.Request(f"http://127.0.0.1:{GATE_PORT}/api/flow/say",
             data=json.dumps({"text":"I want to save 3L for medical emergencies"}).encode(),
             headers={"Content-Type":"application/json"})
         d=json.loads(urllib.request.urlopen(rq,timeout=10).read())
@@ -190,7 +227,8 @@ try:
         if not adv: fails.append("adversary still works, model down")
 finally:
     p2.send_signal(signal.SIGTERM); p2.wait(timeout=5)
-    if os.path.exists("memory_gate.jsonl"): os.remove("memory_gate.jsonl")
+    for _f in ("memory_gate.jsonl","chat_gate.jsonl"):
+        if os.path.exists(_f): os.remove(_f)
 
 print("\nFULL GATE:","ALL PASS" if not fails else f"{len(fails)} FAILURES {fails}")
 sys.exit(1 if fails else 0)

@@ -2,7 +2,7 @@
 Contracts per Anchor 1 §14 are preserved at /api/aspirations, /api/aspirations/{id}/response,
 /api/journal/memory. The /api/flow/* endpoints add friend-voice narration on top."""
 import json, re
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pipeline import Pipeline
 import narrate as N
 from chat import ChatLog
@@ -29,14 +29,20 @@ def _llm_health():
                 "intent_stats":s["intent"]}
     except Exception as e:
         return {"enabled":False,"active":"deterministic_fallback","error":type(e).__name__}
-PIPE=Pipeline(memory_path="memory.jsonl",master_secret=_SECRET)
-CHAT=ChatLog()
-SESSION={"streak":0}
+PIPE=Pipeline(memory_path=_os.environ.get("IASPIRE_MEMORY_FILE","memory.jsonl"),master_secret=_SECRET)
+CHAT=ChatLog(path=_os.environ.get("IASPIRE_CHAT_FILE","chat_log.jsonl"))
+SESSION={"streak":0,"greeted":False}
 
 def _submit_flow(text):
     """Greeting, then the shared composer - so submit and continue cannot drift apart, and
-    both get transcript logging and the editable block."""
-    stages=[{"kind":"greeting","text":N.greeting(streak=SESSION["streak"])}]
+    both get transcript logging and the editable block.
+
+    The greeting is a welcome, not a preamble: repeating "let's go through it" before every
+    message is what made this read like a form instead of a conversation."""
+    stages=[]
+    if not SESSION.get("greeted"):
+        stages.append({"kind":"greeting","text":N.greeting(streak=SESSION["streak"])})
+        SESSION["greeted"]=True
     CHAT.add("user",text)
     r=PIPE.submit(text)
     if r["status"]=="smalltalk":
@@ -437,6 +443,10 @@ const LBL={on_track:'on track',tight:'tight',behind:'behind',at_risk:'at risk'};
 })();
 </script>"""
 class H(BaseHTTPRequestHandler):
+    # HTTP/1.1 with a threading server. The single-threaded default served curl fine but
+    # deadlocked a real browser, which holds connections open and issues requests in
+    # parallel - the page would load and then every message would hang unanswered.
+    protocol_version="HTTP/1.1"
     def log_message(self,*a): pass
     def handle_one_request(self):
         """A handler that raises must still produce a well-formed response. Without this a
@@ -455,8 +465,31 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type",ctype)
         self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
     def _body(self):
-        n=int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        """Read a request body from either Content-Length or a chunked stream.
+
+        Previously only Content-Length was read, so a chunked request silently parsed as an
+        empty body and the app answered "text required" to a perfectly valid message.
+        """
+        te=(self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in te:
+            chunks=[]; size=int(self.headers.get("X-Chunk-Encoding",0) or 0)
+            while True:
+                line=self.rfile.readline().strip()
+                if not line: break
+                try: size=int(line.split(b";")[0],16)
+                except ValueError: break
+                if size==0:
+                    self.rfile.readline(); break
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()
+            raw=b"".join(chunks)
+        else:
+            n=int(self.headers.get("Content-Length") or 0)
+            raw=self.rfile.read(n) if n else b""
+        if not raw: return {}
+        try: return json.loads(raw)
+        except ValueError:
+            raise ValueError("request body was not valid JSON")
     def do_GET(self):
         if self.path=="/": return self._send(200,PAGE,"text/html")
         if self.path=="/data": return self._send(200,DATA_PAGE,"text/html")
@@ -521,5 +554,10 @@ class H(BaseHTTPRequestHandler):
         self._send(404,'{"error":"not found"}')
 
 if __name__=="__main__":
-    print("iASPIRE Journal  ->  http://127.0.0.1:8848")
-    HTTPServer(("127.0.0.1",8848),H).serve_forever()
+    _port=int(_os.environ.get("PORT","8848"))
+    print(f"iASPIRE Journal  ->  http://127.0.0.1:{_port}  (Ctrl-C to stop)",flush=True)
+    srv=ThreadingHTTPServer(("127.0.0.1",_port),H)
+    srv.daemon_threads=True
+    try: srv.serve_forever()
+    except KeyboardInterrupt: pass
+    finally: srv.server_close()
